@@ -81,7 +81,6 @@ impl LcuListener {
                             let _ = broadcast.send(lcu_data);
                         }
                     } else {
-                        panic!("socket error");
                     }
                 }
             }

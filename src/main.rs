@@ -1,18 +1,8 @@
 mod lcu;
 
-use chrono::Local;
-use serde_derive::Deserialize;
-use serde_derive::Serialize;
 use crate::lcu::lcu_client::LcuClient;
 use crate::lcu::utils::get_now_str;
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct testJson {
-    data: String,
-    eventType: String,
-    uri: String,
-}
 
 #[tokio::main]
 async fn main() {

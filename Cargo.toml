@@ -1,0 +1,25 @@
+[package]
+name = "poro"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# websocket
+tokio-tungstenite = {version = "0.24.0", features = ["native-tls"]}
+futures = "0.3.31"
+native-tls = "0.2.12"
+# 序列化
+serde_json = "1.0.132"
+serde_derive = "1.0.215"
+serde = "1.0.215"
+# 异步运行时
+tokio = { version = "1.41.1", features = ["full"] }
+# GBK编码
+encoding = "0.2.33"
+# 正则
+regex = "1.11.1"
+
+reqwest = { version = "0.12.9", features = ["json"] }
+base64 = "0.22.1"
+futures-util = "0.3.31"
+chrono = "0.4.38"

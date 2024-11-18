@@ -26,6 +26,8 @@ pub(super) fn get_lol_client_connect_info() -> Result<LolClientConnectInfo, Box<
             "commandline",
         ])
         .stdout(Stdio::piped())
+        .stdin(Stdio::null()) // 屏蔽 stdin，防止其他输入干扰
+        .stderr(Stdio::null()) // 屏蔽 stderr 输出
         .spawn()?;
     if let Some(stdout) = output.stdout {
         let mut reader = BufReader::new(stdout);
@@ -33,7 +35,6 @@ pub(super) fn get_lol_client_connect_info() -> Result<LolClientConnectInfo, Box<
         reader.read_to_end(&mut buffer)?;
         // windows 命令需要GBK编码
         if let Ok(line) = GBK.decode(&buffer, DecoderTrap::Strict) {
-
             //通过进程名查询出进程的启动命令,解析出需要的客户端token和端口
             let token_pattern = regex::Regex::new(r"--remoting-auth-token=([\w-]+)")?;
             let mut token = String::from("");

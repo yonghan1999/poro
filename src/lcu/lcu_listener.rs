@@ -9,6 +9,7 @@ use tokio::{
     net::TcpStream,
     sync::{broadcast, RwLock},
 };
+use tokio::sync::Notify;
 use tokio_tungstenite::Connector::NativeTls;
 use tokio_tungstenite::{
     tungstenite::{protocol::WebSocketConfig, ClientRequestBuilder, Message},
@@ -26,9 +27,10 @@ pub struct LcuData {
 pub struct LcuListener {
     pub data: Arc<RwLock<broadcast::Sender<LcuData>>>,
     pub socket: Arc<RwLock<WebSocketStream<MaybeTlsStream<TcpStream>>>>,
+    pub stop_notify: Arc<Notify>,
 }
 impl LcuListener {
-    pub async fn new() -> Result<Self, Box<dyn Error>> {
+    pub async fn new(stop_notify: Arc<Notify>) -> Result<Self, Box<dyn Error>> {
         let connect_info_res = get_lol_client_connect_info();
         let connect_info = connect_info_res?;
         // allow invalid ssl certificates
@@ -62,26 +64,29 @@ impl LcuListener {
         let lcu_listener = LcuListener {
             data: Arc::new(RwLock::new(tx)),
             socket: Arc::new(RwLock::new(socket)),
+            stop_notify: stop_notify.clone(),
         };
 
         let c_socket = lcu_listener.socket.clone();
         let c_data = lcu_listener.data.clone();
+        let c_notify = lcu_listener.stop_notify.clone();
 
         tokio::spawn(async move {
             let mut socket = c_socket.write().await;
             let broadcast = c_data.read().await;
-            loop {
-                while let Some(msg) = socket.next().await {
-                    if let Ok(msg) = msg {
-                        if msg.is_empty() { continue; }
-                        let data: (i32, String, Option<LcuData>) =
-                            serde_json::from_str(&msg.to_string()).unwrap();
-                        if data.2.is_some() {
-                            let lcu_data = data.2.unwrap().clone();
-                            let _ = broadcast.send(lcu_data);
-                        }
-                    } else {
+            while let Some(msg) = socket.next().await {
+                if let Ok(msg) = msg {
+                    if msg.is_empty() { continue; }
+                    let data: (i32, String, Option<LcuData>) =
+                        serde_json::from_str(&msg.to_string()).unwrap();
+                    if data.2.is_some() {
+                        let lcu_data = data.2.unwrap().clone();
+                        let _ = broadcast.send(lcu_data);
                     }
+                }
+                else {
+                    c_notify.notify_one();
+                    break;
                 }
             }
         });

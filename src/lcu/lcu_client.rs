@@ -2,10 +2,8 @@ use super::lcu_listener::{LcuData, LcuListener};
 use crate::lcu::constants::{game_state, lcu_api};
 use crate::lcu::utils::{gen_lcu_auth, get_lol_client_connect_info, get_now_str};
 use reqwest::{header, Client};
-use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
-use chrono::Local;
 use tokio::sync::{Notify, RwLock};
 use tokio::time::sleep;
 
@@ -15,21 +13,24 @@ struct LcuClientConfig {
 
 pub struct LcuClient {
     listener: Arc<RwLock<Option<LcuListener>>>,
-    stop_notify: Arc<Notify>,
     config: Arc<RwLock<LcuClientConfig>>,
+    stop_notify: Arc<Notify>,
 }
 
 impl LcuClient {
     pub fn new() -> Self {
         let listener = Arc::new(RwLock::new(None));
         let c_listener = listener.clone();
+        let stop_notify = Arc::new(Notify::new());
+        let c_stop_notify = stop_notify.clone();
 
         tokio::spawn(async move {
             // 获取websocket
             let mut my_listener = c_listener.write().await;
             loop {
+                let l_stop_notify = c_stop_notify.clone();
                 if my_listener.is_none() {
-                    if let Ok(listener) = LcuListener::new().await {
+                    if let Ok(listener) = LcuListener::new(l_stop_notify).await {
                         *my_listener = Some(listener);
                         break;
                     }
@@ -45,11 +46,10 @@ impl LcuClient {
                 auto_accept: false
             }
         ));
-        let stop_notify = Arc::new(Notify::new());
         LcuClient {
             listener,
-            stop_notify,
             config,
+            stop_notify
         }
     }
 
@@ -63,7 +63,7 @@ impl LcuClient {
 
     pub async fn exec(&self) {
         let c_listener = self.listener.clone();
-        let notify = self.stop_notify.clone();
+        let notify = self.get_stop_notify();
         let config = self.config.clone();
         tokio::spawn(async move {
             let listener = c_listener;
@@ -80,6 +80,7 @@ impl LcuClient {
             while let Ok(lcu_data) = rx.recv().await {
                 Self::match_data(config.clone(), lcu_data).await;
             }
+            println!("{} 断开连接", get_now_str());
             notify.notify_one();
         });
     }

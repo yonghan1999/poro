@@ -49,7 +49,7 @@ impl LcuClient {
         LcuClient {
             listener,
             config,
-            stop_notify
+            stop_notify,
         }
     }
 

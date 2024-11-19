@@ -5,11 +5,11 @@ use serde_derive::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::Display;
 use std::sync::Arc;
+use tokio::sync::Notify;
 use tokio::{
     net::TcpStream,
     sync::{broadcast, RwLock},
 };
-use tokio::sync::Notify;
 use tokio_tungstenite::Connector::NativeTls;
 use tokio_tungstenite::{
     tungstenite::{protocol::WebSocketConfig, ClientRequestBuilder, Message},
@@ -83,8 +83,7 @@ impl LcuListener {
                         let lcu_data = data.2.unwrap().clone();
                         let _ = broadcast.send(lcu_data);
                     }
-                }
-                else {
+                } else {
                     c_notify.notify_one();
                     break;
                 }

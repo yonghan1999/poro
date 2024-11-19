@@ -55,7 +55,6 @@ pub mod game_state {
     pub const RECONNECT: &str = "Reconnect";
     // 观战中
     pub const WATCH_IN_PROGRESS: &str = "WatchInProgress";
-    
 }
 
 pub mod lcu_api {

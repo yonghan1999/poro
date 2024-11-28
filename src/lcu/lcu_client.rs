@@ -3,12 +3,16 @@ use crate::lcu::constants::{lcu_api, GameState, Value};
 use crate::lcu::utils::{gen_lcu_auth, get_lol_client_connect_info};
 use reqwest::{header, Client};
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, RwLock};
 use tokio::time::sleep;
 
-type Callback = fn();
+pub type Callback = fn() -> Pin<Box<dyn Future<Output=()> + Send>>;
+
+struct CallbackRes {}
 
 
 pub struct LcuClient {
@@ -94,7 +98,8 @@ impl LcuClient {
                 sleep(Duration::from_secs(1)).await;
             }
             while let Ok(lcu_data) = rx.recv().await {
-                Self::match_data(actions.clone(), lcu_data).await;
+                let a = actions.clone();
+                Self::match_data(a, lcu_data).await;
             }
             notify.notify_one();
         });
@@ -109,7 +114,9 @@ impl LcuClient {
                 let actions = actions.read().await;
                 let res = actions.get(&game_state);
                 if let Some(callbacks) = res {
-                    callbacks.iter().for_each(|f| f());
+                    for callback in callbacks {
+                        callback().await;
+                    }
                 }
             }
             _ => {

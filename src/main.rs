@@ -13,13 +13,9 @@ async fn main() {
         println!("{} 正在连接游戏...", get_now_str());
         let client = LcuClient::new();
         println!("{} 启动完成", get_now_str());
-        client.add_game_flow_action(GameState::ReadyCheck, || {
-            accept_game();
-        }).await;
+        client.add_game_flow_action(GameState::ReadyCheck, accept_game).await;
         println!("{} 自动接受对局功能准备完成...", get_now_str());
-        client.add_game_flow_action(GameState::EndOfGame, || {
-            play_again();
-        }).await;
+        client.add_game_flow_action(GameState::EndOfGame, play_again).await;
         println!("{} 自动再来一局功能准备完成...", get_now_str());
         client.exec().await;
         client.get_stop_notify().notified().await;

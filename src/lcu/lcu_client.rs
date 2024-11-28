@@ -83,19 +83,19 @@ impl LcuClient {
         tokio::spawn(async move {
             let listener = c_listener;
             let mut rx;
+            // 尝试连接本地英雄联盟客户端
             loop {
                 let listener = listener.read().await;
                 if let Some(a) = listener.as_ref() {
                     rx = a.data.read().await.subscribe();
                     break;
                 }
-                sleep(Duration::from_millis(500)).await;
+                // 如果连接失败，则等待1s后重新连接
+                sleep(Duration::from_secs(1)).await;
             }
-            println!("{} 已连接游戏", get_now_str());
             while let Ok(lcu_data) = rx.recv().await {
                 Self::match_data(actions.clone(), lcu_data).await;
             }
-            println!("{} 断开连接", get_now_str());
             notify.notify_one();
         });
     }
@@ -112,7 +112,9 @@ impl LcuClient {
                     callbacks.iter().for_each(|f| f());
                 }
             }
-            _ => {}
+            _ => {
+                // TODO：暂未实现其他状态的功能
+            }
         }
     }
 }

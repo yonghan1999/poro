@@ -24,12 +24,12 @@ pub struct LcuData {
     pub uri: String,
 }
 
-pub struct LcuListener {
+pub struct LcuWebsocket {
     pub data: Arc<RwLock<broadcast::Sender<LcuData>>>,
     pub socket: Arc<RwLock<WebSocketStream<MaybeTlsStream<TcpStream>>>>,
     pub stop_notify: Arc<Notify>,
 }
-impl LcuListener {
+impl LcuWebsocket {
     pub async fn new(stop_notify: Arc<Notify>) -> Result<Self, Box<dyn Error>> {
         let connect_info_res = get_lol_client_connect_info();
         let connect_info = connect_info_res?;
@@ -61,7 +61,7 @@ impl LcuListener {
             .send(Message::Text(message.to_owned()))
             .await?;
         let (tx, _) = broadcast::channel(100);
-        let lcu_listener = LcuListener {
+        let lcu_listener = LcuWebsocket {
             data: Arc::new(RwLock::new(tx)),
             socket: Arc::new(RwLock::new(socket)),
             stop_notify: stop_notify.clone(),

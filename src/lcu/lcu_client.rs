@@ -1,19 +1,19 @@
-use super::lcu_listener::{LcuData, LcuListener};
-use crate::lcu::constants::{game_state, lcu_api};
+use super::lcu_listener::{LcuData, LcuWebsocket};
+use crate::lcu::constants::{lcu_api, GameState, Value};
 use crate::lcu::utils::{gen_lcu_auth, get_lol_client_connect_info, get_now_str};
 use reqwest::{header, Client};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, RwLock};
 use tokio::time::sleep;
 
-struct LcuClientConfig {
-    auto_accept: bool,
-}
+type Callback = fn();
+
 
 pub struct LcuClient {
-    listener: Arc<RwLock<Option<LcuListener>>>,
-    config: Arc<RwLock<LcuClientConfig>>,
+    websocket: Arc<RwLock<Option<LcuWebsocket>>>,
+    game_flow_actions: Arc<RwLock<HashMap<GameState, Vec<Callback>>>>,
     stop_notify: Arc<Notify>,
 }
 
@@ -30,7 +30,7 @@ impl LcuClient {
             loop {
                 let l_stop_notify = c_stop_notify.clone();
                 if my_listener.is_none() {
-                    if let Ok(listener) = LcuListener::new(l_stop_notify).await {
+                    if let Ok(listener) = LcuWebsocket::new(l_stop_notify).await {
                         *my_listener = Some(listener);
                         break;
                     }
@@ -41,15 +41,30 @@ impl LcuClient {
             }
         });
 
-        let config = Arc::new(RwLock::new(
-            LcuClientConfig {
-                auto_accept: false
-            }
-        ));
+        let actions = Arc::new(RwLock::new(HashMap::new()));
         LcuClient {
-            listener,
-            config,
+            websocket: listener,
+            game_flow_actions: actions,
             stop_notify,
+        }
+    }
+
+    pub async fn add_game_flow_action(&self, game_state: GameState, callback: Callback) {
+        let mut game_flow_actions = self.game_flow_actions.write().await;
+        let res = game_flow_actions.get_mut(&game_state);
+        if let Some(callback_list) = res {
+            callback_list.push(callback);
+        } else {
+            let mut callback_list = Vec::new();
+            callback_list.push(callback);
+            game_flow_actions.insert(game_state, callback_list);
+        }
+    }
+
+    pub async fn remove_game_flow_action(&self, game_state: GameState, index: usize) {
+        let mut game_flow_actions = self.game_flow_actions.write().await;
+        if let Some(callback_list) = game_flow_actions.get_mut(&game_state) {
+            callback_list.remove(index);
         }
     }
 
@@ -57,14 +72,14 @@ impl LcuClient {
         self.stop_notify.clone()
     }
 
-    pub fn get_event_listener(&self) -> Arc<RwLock<Option<LcuListener>>> {
-        self.listener.clone()
+    pub fn get_event_listener(&self) -> Arc<RwLock<Option<LcuWebsocket>>> {
+        self.websocket.clone()
     }
 
     pub async fn exec(&self) {
-        let c_listener = self.listener.clone();
+        let c_listener = self.websocket.clone();
         let notify = self.get_stop_notify();
-        let config = self.config.clone();
+        let actions = self.game_flow_actions.clone();
         tokio::spawn(async move {
             let listener = c_listener;
             let mut rx;
@@ -78,72 +93,39 @@ impl LcuClient {
             }
             println!("{} 已连接游戏", get_now_str());
             while let Ok(lcu_data) = rx.recv().await {
-                Self::match_data(config.clone(), lcu_data).await;
+                Self::match_data(actions.clone(), lcu_data).await;
             }
             println!("{} 断开连接", get_now_str());
             notify.notify_one();
         });
     }
 
-    async fn match_data(config: Arc<RwLock<LcuClientConfig>>, lcu_data: LcuData) {
+    async fn match_data(actions: Arc<RwLock<HashMap<GameState, Vec<Callback>>>>, lcu_data: LcuData) {
         match lcu_data.uri.as_str() {
             // 游戏状态
             lcu_api::GAMEFLOW_PHASE => {
-                let game_state = lcu_data.data.as_str().unwrap();
-                if game_state == game_state::READY_CHECK {
-                    println!("{} 找到对局！", get_now_str());
-                    Self::game_ready(config.clone(), lcu_data).await;
-                } else if game_state == game_state::MATCH_MAKING {
-                    println!("{} 正在队列中...", get_now_str());
-                } else if game_state == game_state::CHAMP_SELECT {
-                    println!("{} 选择英雄中...", get_now_str());
-                } else if game_state == game_state::GAME_START {
-                    println!("{} 游戏开始", get_now_str());
-                } else if game_state == game_state::IN_PROGRESS {
-                    println!("{} 游戏中...", get_now_str());
-                } else if game_state == game_state::PRE_END_OF_GAME {
-                    println!("{} 游戏即将结束...", get_now_str());
-                } else if game_state == game_state::WAITING_FOR_STATS {
-                    println!("{} 等待结算界面", get_now_str());
-                } else if game_state == game_state::END_OF_GAME {
-                    println!("{} 游戏结束", get_now_str());
-                } else if game_state == game_state::NONE {
-                    println!("{} 在游戏主界面等待中...", get_now_str());
-                } else if game_state == game_state::LOBBY {
-                    println!("{} 在房间中，等待开始游戏...", get_now_str());
-                } else {
-                    // todo!()
+                let state = lcu_data.data.as_str().unwrap();
+                let game_state = GameState::from_value(state);
+                let actions = actions.read().await;
+                let res = actions.get(&game_state);
+                if let Some(callbacks) = res {
+                    callbacks.iter().for_each(|f| f());
                 }
             }
             _ => {}
         }
-    }
-
-    async fn game_ready(config: Arc<RwLock<LcuClientConfig>>, lcu_data: LcuData) {
-        // 自动接受对局
-        let auto_accept = config.read().await.auto_accept;
-        if auto_accept {
-            let instance = get_lcu_http_client();
-            let lcu_client = instance.read().await;
-            lcu_client.client.post(format!("{}{}", lcu_client.url.clone(), lcu_api::GAME_ACCEPT)).body("").send().await.unwrap();
-            println!("{} 已自动接受对局。", get_now_str())
-        }
-    }
-
-    pub async fn auto_accept(&self, enable: bool) {
-        self.config.write().await.auto_accept = enable;
     }
 }
 
 static mut LCU_HTTP_CLIENT: Option<Arc<RwLock<LcuHttpClient>>> = None;
 static mut ONCE: std::sync::Once = std::sync::Once::new();
 
-struct LcuHttpClient {
-    client: Client,
-    url: String,
+pub(in crate::lcu) struct LcuHttpClient {
+    pub(in crate::lcu) client: Client,
+    pub(in crate::lcu) url: String,
 }
 
-fn get_lcu_http_client() -> Arc<RwLock<LcuHttpClient>> {
+pub(in crate::lcu) fn get_lcu_http_client() -> Arc<RwLock<LcuHttpClient>> {
     unsafe {
         if LCU_HTTP_CLIENT.is_some() {
             return LCU_HTTP_CLIENT.as_ref().unwrap().clone();
@@ -163,7 +145,7 @@ fn get_lcu_http_client() -> Arc<RwLock<LcuHttpClient>> {
                 let instance = LcuHttpClient { client, url };
                 let _ = LCU_HTTP_CLIENT.insert(Arc::new(RwLock::new(instance)));
             });
-            return LCU_HTTP_CLIENT.as_ref().unwrap().clone();
+            LCU_HTTP_CLIENT.as_ref().unwrap().clone()
         }
     }
 }

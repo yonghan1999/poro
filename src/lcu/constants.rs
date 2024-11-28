@@ -1,5 +1,7 @@
 pub trait Value<T> {
     fn value(&self) -> T;
+
+    fn from_value(val: T) -> Self;
 }
 
 pub enum Operator {
@@ -16,45 +18,86 @@ impl Value<i32> for Operator {
             Operator::Event => 8,
         }
     }
+
+    fn from_value(val: i32) -> Self {
+        match val {
+            5 => Operator::Sub,
+            6 => Operator::DisSub,
+            8 => Operator::Event,
+            _ => unreachable!(),
+        }
+    }
 }
 
 pub enum Event {
     OnJsonApiEvent,
 }
 
-impl Value<&'static str> for Event {
+impl Value<&str> for Event {
     fn value(&self) -> &'static str {
         match self {
             Event::OnJsonApiEvent => "OnJsonApiEvent",
         }
     }
+
+    fn from_value(val: &str) -> Self {
+        match val {
+            "OnJsonApiEvent" => Event::OnJsonApiEvent,
+            _ => unreachable!(),
+        }
+    }
 }
 
-pub mod game_state {
-    // 在大厅
-    pub const NONE: &str = "None";
-    // 在房间中
-    pub const LOBBY: &str = "Lobby";
-    // 队列中
-    pub const MATCH_MAKING: &str = "Matchmaking";
-    // 找到对局等待接受
-    pub const READY_CHECK: &str = "ReadyCheck";
-    // 选择英雄中
-    pub const CHAMP_SELECT: &str = "ChampSelect";
-    // 游戏开始
-    pub const GAME_START: &str = "GameStart";
-    // 游戏中
-    pub const IN_PROGRESS: &str = "InProgress";
-    // 游戏即将结束
-    pub const PRE_END_OF_GAME: &str = "PreEndOfGame";
-    // 等待结算界面
-    pub const WAITING_FOR_STATS: &str = "WaitingForStats";
-    // 游戏结束
-    pub const END_OF_GAME: &str = "EndOfGame";
-    // 重新连接
-    pub const RECONNECT: &str = "Reconnect";
-    // 观战中
-    pub const WATCH_IN_PROGRESS: &str = "WatchInProgress";
+#[derive(Eq, Hash, PartialEq)]
+pub enum GameState {
+    None,
+    Lobby,
+    MatchMaking,
+    ReadyCheck,
+    ChampSelect,
+    GameStart,
+    InProgress,
+    PreEndOfGame,
+    WaitingForStats,
+    EndOfGame,
+    Reconnect,
+    WatchInProgress,
+}
+impl Value<&str> for GameState {
+    fn value(&self) -> &'static str {
+        match self {
+            GameState::None => "None",
+            GameState::Lobby => "Lobby",
+            GameState::MatchMaking => "Matchmaking",
+            GameState::ReadyCheck => "ReadyCheck",
+            GameState::ChampSelect => "ChampSelect",
+            GameState::GameStart => "GameStart",
+            GameState::InProgress => "InProgress",
+            GameState::PreEndOfGame => "PreEndOfGame",
+            GameState::WaitingForStats => "WaitingForStats",
+            GameState::EndOfGame => "EndOfGame",
+            GameState::Reconnect => "Reconnect",
+            GameState::WatchInProgress => "WatchInProgress",
+        }
+    }
+
+    fn from_value(val: &str) -> Self {
+        match val {
+            "None" => GameState::None,
+            "Lobby" => GameState::Lobby,
+            "MatchMaking" => GameState::MatchMaking,
+            "ReadyCheck" => GameState::ReadyCheck,
+            "ChampSelect" => GameState::ChampSelect,
+            "GameStart" => GameState::GameStart,
+            "InProgress" => GameState::InProgress,
+            "PreEndOfGame" => GameState::PreEndOfGame,
+            "WaitingForStats" => GameState::WaitingForStats,
+            "EndOfGame" => GameState::EndOfGame,
+            "Reconnect" => GameState::Reconnect,
+            "WatchInProgress" => GameState::WatchInProgress,
+            _ => unreachable!(),
+        }
+    }
 }
 
 pub mod lcu_api {
@@ -62,4 +105,10 @@ pub mod lcu_api {
     pub const GAMEFLOW_PHASE: &str = "/lol-gameflow/v1/gameflow-phase";
     // 接受对局
     pub const GAME_ACCEPT: &str = "/lol-matchmaking/v1/ready-check/accept";
+    // 再来一局
+    pub const PLAY_AGAIN: &str = "/lol-lobby/v2/play-again";
+    // 寻找对局
+    pub const GAME_SEARCH: &str = "/lol-lobby/v2/lobby/matchmaking/search";
+    // 给队友点赞
+    pub const HONOR_PLAYER: &str = "/lol-honor-v2/v1/honor-player";
 }

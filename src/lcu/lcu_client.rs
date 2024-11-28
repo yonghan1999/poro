@@ -1,6 +1,6 @@
 use super::lcu_listener::{LcuData, LcuWebsocket};
 use crate::lcu::constants::{lcu_api, GameState, Value};
-use crate::lcu::utils::{gen_lcu_auth, get_lol_client_connect_info, get_now_str};
+use crate::lcu::utils::{gen_lcu_auth, get_lol_client_connect_info};
 use reqwest::{header, Client};
 use std::collections::HashMap;
 use std::sync::Arc;

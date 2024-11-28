@@ -85,7 +85,7 @@ impl Value<&str> for GameState {
         match val {
             "None" => GameState::None,
             "Lobby" => GameState::Lobby,
-            "MatchMaking" => GameState::MatchMaking,
+            "Matchmaking" => GameState::MatchMaking,
             "ReadyCheck" => GameState::ReadyCheck,
             "ChampSelect" => GameState::ChampSelect,
             "GameStart" => GameState::GameStart,
@@ -95,7 +95,10 @@ impl Value<&str> for GameState {
             "EndOfGame" => GameState::EndOfGame,
             "Reconnect" => GameState::Reconnect,
             "WatchInProgress" => GameState::WatchInProgress,
-            _ => unreachable!(),
+            _ => {
+                println!("unreachable! GameState {}",val);
+                GameState::None
+            },
         }
     }
 }

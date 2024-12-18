@@ -1,6 +1,6 @@
 use super::lcu_listener::{LcuData, LcuWebsocket};
 use crate::lcu::constants::{lcu_api, GameState, Value};
-use crate::lcu::utils::{gen_lcu_auth, get_lol_client_connect_info};
+use crate::lcu::utils::{gen_lcu_auth, get_lol_client_connect_info, get_now_str};
 use reqwest::{header, Client};
 use std::collections::HashMap;
 use std::future::Future;
@@ -111,6 +111,9 @@ impl LcuClient {
             lcu_api::GAMEFLOW_PHASE => {
                 let state = lcu_data.data.as_str().unwrap();
                 let game_state = GameState::from_value(state);
+                if game_state == GameState::EndOfGame {
+                    println!("{} {:?}\n\n\n",get_now_str(), &lcu_data);
+                }
                 let actions = actions.read().await;
                 let res = actions.get(&game_state);
                 if let Some(callbacks) = res {
@@ -150,10 +153,8 @@ pub(in crate::lcu) fn get_lcu_http_client() -> Arc<RwLock<LcuHttpClient>> {
                 .danger_accept_invalid_certs(true)
                 .build().unwrap();
             let url = format!("https://{}:{}", "127.0.0.1", connect_info.port);
-            ONCE.call_once(|| {
-                let instance = LcuHttpClient { client, url };
-                let _ = LCU_HTTP_CLIENT.insert(Arc::new(RwLock::new(instance)));
-            });
+            let instance = LcuHttpClient { client, url };
+            let _ = LCU_HTTP_CLIENT.insert(Arc::new(RwLock::new(instance)));
             LCU_HTTP_CLIENT.as_ref().unwrap().clone()
         }
     }

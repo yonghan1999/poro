@@ -3,11 +3,12 @@ use crate::lcu::constants::{lcu_api, GameState, Value};
 use crate::lcu::utils::{gen_lcu_auth, get_lol_client_connect_info, get_now_str};
 use reqwest::{header, Client};
 use std::collections::HashMap;
+use std::error::Error;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{broadcast, Notify, RwLock};
 use tokio::time::sleep;
 
 pub type Callback = fn() -> Pin<Box<dyn Future<Output=()> + Send>>;
@@ -29,16 +30,30 @@ impl LcuClient {
         let c_stop_notify = stop_notify.clone();
 
         tokio::spawn(async move {
-            // 获取websocket
+            // 获取websocket连接，带重试逻辑
             let mut my_listener = c_listener.write().await;
+            let mut retry_count = 0;
+            const MAX_RETRIES: u32 = 10;
+            
             loop {
                 let l_stop_notify = c_stop_notify.clone();
                 if my_listener.is_none() {
-                    if let Ok(listener) = LcuWebsocket::new(l_stop_notify).await {
-                        *my_listener = Some(listener);
-                        break;
+                    match LcuWebsocket::new(l_stop_notify).await {
+                        Ok(ws) => {
+                            *my_listener = Some(ws);
+                            println!("{} WebSocket连接建立成功", get_now_str());
+                            break;
+                        }
+                        Err(_) => {
+                            retry_count += 1;
+                            if retry_count >= MAX_RETRIES {
+                                println!("{} WebSocket连接失败{}次，停止尝试", get_now_str(), retry_count);
+                                break;
+                            }
+                            println!("{} WebSocket连接失败{}次，等待1秒后重试...", get_now_str(), retry_count);
+                            sleep(Duration::from_secs(1)).await;
+                        }
                     }
-                    sleep(Duration::from_millis(500)).await;
                 } else {
                     break;
                 }
@@ -80,6 +95,31 @@ impl LcuClient {
         self.websocket.clone()
     }
 
+    pub async fn reconnect(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // 重置HTTP客户端
+        reset_lcu_http_client()?;
+        
+        // 重新创建WebSocket连接
+        let mut websocket = self.websocket.write().await;
+        *websocket = None;
+        
+        // 尝试重新连接
+        let stop_notify = self.stop_notify.clone();
+        loop {
+            match LcuWebsocket::new(stop_notify.clone()).await {
+                Ok(new_websocket) => {
+                    *websocket = Some(new_websocket);
+                    println!("{} 重新连接成功！", get_now_str());
+                    return Ok(());
+                }
+                Err(e) => {
+                    println!("{} 重新连接失败: {}，等待5秒后重试...", get_now_str(), e);
+                    sleep(Duration::from_secs(5)).await;
+                }
+            }
+        }
+    }
+
     pub async fn exec(&self) {
         let c_listener = self.websocket.clone();
         let notify = self.get_stop_notify();
@@ -87,19 +127,47 @@ impl LcuClient {
         tokio::spawn(async move {
             let listener = c_listener;
             let mut rx;
+            let mut connection_attempts = 0;
+            const MAX_CONNECTION_ATTEMPTS: u32 = 30; // 最多尝试30秒
+            
             // 尝试连接本地英雄联盟客户端
             loop {
                 let listener = listener.read().await;
                 if let Some(a) = listener.as_ref() {
                     rx = a.data.read().await.subscribe();
+                    println!("{} 成功订阅游戏事件", get_now_str());
                     break;
                 }
+                
+                connection_attempts += 1;
+                if connection_attempts >= MAX_CONNECTION_ATTEMPTS {
+                    println!("{} 连接游戏失败，超过最大重试次数", get_now_str());
+                    notify.notify_one();
+                    return;
+                }
+                
                 // 如果连接失败，则等待1s后重新连接
                 sleep(Duration::from_secs(1)).await;
             }
-            while let Ok(lcu_data) = rx.recv().await {
-                let a = actions.clone();
-                Self::match_data(a, lcu_data).await;
+            
+            // 监听游戏事件
+            loop {
+                match rx.recv().await {
+                    Ok(lcu_data) => {
+                        let a = actions.clone();
+                        Self::match_data(a, lcu_data).await;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // 如果落后了，继续接收新消息
+                        println!("{} 消息处理落后，跳过一些消息", get_now_str());
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        // 连接已关闭，可能是游戏重启了
+                        println!("{} WebSocket连接已关闭，可能是游戏重启了", get_now_str());
+                        break;
+                    }
+                }
             }
             notify.notify_one();
         });
@@ -156,6 +224,35 @@ pub(in crate::lcu) fn get_lcu_http_client() -> Arc<RwLock<LcuHttpClient>> {
             let instance = LcuHttpClient { client, url };
             let _ = LCU_HTTP_CLIENT.insert(Arc::new(RwLock::new(instance)));
             LCU_HTTP_CLIENT.as_ref().unwrap().clone()
+        }
+    }
+}
+
+pub(in crate::lcu) fn reset_lcu_http_client() -> Result<(), Box<dyn Error + Send + Sync>> {
+    unsafe {
+        if LCU_HTTP_CLIENT.is_some() {
+            // 获取新的连接信息
+            let connect_info = match get_lol_client_connect_info() {
+                Ok(info) => info,
+                Err(e) => return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))
+            };
+            let mut headers = header::HeaderMap::new();
+            headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static("application/json; charset=utf-8"));
+            headers.insert(header::ACCEPT, header::HeaderValue::from_static("application/json; charset=utf-8"));
+            let auth = gen_lcu_auth("riot", &connect_info.token);
+            headers.insert(header::AUTHORIZATION, header::HeaderValue::from_str(auth.as_str()).unwrap());
+            let client = Client::builder()
+                .default_headers(headers)
+                .danger_accept_invalid_certs(true)
+                .build()?;
+            let url = format!("https://{}:{}", "127.0.0.1", connect_info.port);
+            let instance = LcuHttpClient { client, url };
+            LCU_HTTP_CLIENT = Some(Arc::new(RwLock::new(instance)));
+            Ok(())
+        } else {
+            // 如果还没有初始化，直接创建新的
+            let _ = get_lcu_http_client();
+            Ok(())
         }
     }
 }

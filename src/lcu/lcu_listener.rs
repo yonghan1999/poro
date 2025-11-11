@@ -1,4 +1,4 @@
-use super::{constants::{self, Value as ConstantValue}, utils::{gen_lcu_auth, get_lol_client_connect_info}};
+use super::{constants::{self, Value as ConstantValue}, utils::{gen_lcu_auth, get_lol_client_connect_info, get_now_str}};
 use futures::SinkExt;
 use futures_util::StreamExt;
 use serde_derive::{Deserialize, Serialize};
@@ -30,9 +30,11 @@ pub struct LcuWebsocket {
     pub stop_notify: Arc<Notify>,
 }
 impl LcuWebsocket {
-    pub async fn new(stop_notify: Arc<Notify>) -> Result<Self, Box<dyn Error>> {
-        let connect_info_res = get_lol_client_connect_info();
-        let connect_info = connect_info_res?;
+    pub async fn new(stop_notify: Arc<Notify>) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let connect_info = match get_lol_client_connect_info() {
+            Ok(info) => info,
+            Err(e) => return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))
+        };
         // allow invalid ssl certificates
         let connector = native_tls::TlsConnector::builder()
             .danger_accept_invalid_certs(true)
@@ -74,20 +76,36 @@ impl LcuWebsocket {
         tokio::spawn(async move {
             let mut socket = c_socket.write().await;
             let broadcast = c_data.read().await;
-            while let Some(msg) = socket.next().await {
-                if let Ok(msg) = msg {
-                    if msg.is_empty() { continue; }
-                    let data: (i32, String, Option<LcuData>) =
-                        serde_json::from_str(&msg.to_string()).unwrap();
-                    if data.2.is_some() {
-                        let lcu_data = data.2.unwrap().clone();
-                        let _ = broadcast.send(lcu_data);
+            while let Some(msg_result) = socket.next().await {
+                match msg_result {
+                    Ok(msg) => {
+                        if msg.is_empty() { continue; }
+                        let data: Result<(i32, String, Option<LcuData>), _> =
+                            serde_json::from_str(&msg.to_string());
+                        
+                        match data {
+                            Ok(parsed_data) => {
+                                if parsed_data.2.is_some() {
+                                    let lcu_data = parsed_data.2.unwrap().clone();
+                                    let _ = broadcast.send(lcu_data);
+                                }
+                            }
+                            Err(e) => {
+                                println!("{} 解析消息失败: {}", get_now_str(), e);
+                                continue;
+                            }
+                        }
                     }
-                } else {
-                    c_notify.notify_one();
-                    break;
+                    Err(e) => {
+                        println!("{} WebSocket连接错误: {}，连接将关闭", get_now_str(), e);
+                        c_notify.notify_one();
+                        break;
+                    }
                 }
             }
+            // 连接已关闭，通知监听器
+            println!("{} WebSocket连接已关闭", get_now_str());
+            c_notify.notify_one();
         });
         Ok(lcu_listener)
     }
